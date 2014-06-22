@@ -1,0 +1,114 @@
+# Practical Machine Learning Project
+
+In this report, we use machine learning algorithms to predict the category of movement that human text subjects intentionally exhibited when performing a simple physical exercise, based on sensor data.
+
+# Obtaining the data
+
+We begin by downloading both the labeled and unlabeled data sets from the Cloudfront host. The labeled set is marked with the category of movement that the test subject was performing. The unlabeled set has no such labels; the whole point of our machine learning exercise is to determine what we think these labels should be in the unlabeled data.
+```{r one, echo=TRUE}
+
+#download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", 
+    "pml-training.csv", method = "curl")
+pmlLabeled <- read.csv("pml-training.csv")
+
+#download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", 
+    "pml-testing.csv", method = "curl")
+pmlUnlabeled <- read.csv("pml-testing.csv")
+```
+
+# Dividing the training set
+
+We separate our labeled data into a training set and a validation set. This will allow us to determine how well our learning algorithm is likely to perform on the unlabeled data.
+
+```{r two, echo=TRUE}
+library(caret)
+```
+
+```{r twohalf, echo=TRUE}
+set.seed(8765309)
+pmlInTraining <- createDataPartition(pmlLabeled$classe, p = 0.8, list = FALSE)
+pmlTraining <- pmlLabeled[pmlInTraining, ]
+pmlTesting <- pmlLabeled[-pmlInTraining, ]
+```
+
+## Distributing the dimensionality of data
+
+Before we can meaningfully apply machine learning techniques to the data, we should first clean the data to improve both computational time and final model accuracy.
+
+## Discarding unnecessary columns
+
+Most of the columns in the training data set are either empty or filled with invalid data (NA, empty space, etc.). We therefore clean the data by first observing which columns have most of their contents filled in, and only keeping those. If a column mostly consists of NA's and/or empty space, we toss it out.
+
+```{r three, echo=TRUE}
+pmlColumnFillCounts <- sapply(pmlTraining, function(col) {
+    sum(!(is.na(col) | col == ""))
+})
+pmlFullColumns <- names(pmlColumnFillCounts[pmlColumnFillCounts == length(pmlTraining$classe)])
+```
+
+## Discarding columns that lead to overfitting
+
+While we're here, let's also omit all the timestamp and window columns, because those will encourage our machine learning model to overfit. Likewise, we'll omit the "user_name" column for the same reason. Our model should learn to classify the user's actions based on what motions the user is performing, not by what time the user is peforming them or who the user happens to be.
+
+We'll also omit the label column itself, "classe". This is the dependent variable in our data set, so we'll handle it separately.
+
+```{r four, echo=TRUE}
+pmlFullColumns <- pmlFullColumns[!pmlFullColumns %in% c("X", "user_name", "raw_timestamp_part_1", 
+    "raw_timestamp_part_2", "cvtd_timestamp", "new_window", "num_window", "classe")]
+```
+These steps dramatically reduce the number of dimensions we have to work with, thus making our data much more manageable.
+
+```{r five, echo=TRUE}
+pmlTrainingTrimmed <- pmlTraining[, pmlFullColumns]
+
+data.frame(column_count_before_discarding_mostly_empty_columns = ncol(pmlTraining), 
+    column_count_after_discarding_mostly_empty_columns = ncol(pmlTrainingTrimmed))
+```
+
+# Training a model
+
+We'll use a Generalized Boosted Regression Model with Stochastic Gradient Boosting (method label "gbm") to try to predict the values in this data set. We'll tell it to run for 300 iterations with a step size of .1; these values are drawn from GBM's default settings, but with a higher iteration count so as to allow the model to converge more closely to a high-quality solution.
+
+```{r six, echo=TRUE}
+pmlTrainControl <- trainControl(method = "none")
+pmlTuneGrid <- data.frame(interaction.depth = 4, n.trees = 300, shrinkage = 0.1)
+
+pmlModel <- train(pmlTrainingTrimmed, pmlTraining$classe, method = "gbm", trControl = pmlTrainControl, 
+    tuneGrid = pmlTuneGrid)
+```
+
+```{r six, echo=TRUE}
+pmlModel
+```
+
+
+## Validating model by using out-of-sample data
+
+Let's see how well the model that we just created performs against data it's never seen before. At the beginning of this report, we set aside a small partition of the labeled data to use as a validation set. We'll now use our model to predict what it thinks the labels on this validation data should be, and compare the model's predictions to our actual labels.
+
+```{r seven, echo=TRUE}
+pmlTestingLabelsPred <- predict(pmlModel, newdata = pmlTesting[, pmlFullColumns])
+pmlConfusionMatrix <- confusionMatrix(pmlTestingLabelsPred, pmlTesting$classe)
+pmlConfusionMatrix
+```
+
+
+## Out-of-sample error
+
+The out-of-sample error, as determined by validating the model against a labeled testing partition originally withheld from the training data, is the following value:
+
+```{r eight, echo=TRUE}
+(1 - pmlConfusionMatrix$overall["Accuracy"])[[1]]
+```
+
+# Answers for the unlabeled data
+
+We can now use our model to predict the appropriate labels for our unlabeled data set.
+
+```{r nine, echo=TRUE}
+pmlAnswers <- predict(pmlModel, newdata = pmlUnlabeled[, pmlFullColumns])
+pmlAnswers
+```
+
+
+It is these values that we will submit for evaluation to the online grading system.
